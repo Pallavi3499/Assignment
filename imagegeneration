@@ -1,0 +1,100 @@
+import torch
+from diffusers import StableDiffusionControlNetPipeline, ControlNetModel
+from PIL import Image
+import numpy as np
+import time
+
+# Load the correct ControlNet model for depth maps
+stable_diffusion_model = "runwayml/stable-diffusion-v1-5"
+controlnet_model = ControlNetModel.from_pretrained("fusing/stable-diffusion-v1-5-controlnet-depth", torch_dtype=torch.float16)
+
+# Initialize the pipeline with ControlNet for depth map guidance
+pipe = StableDiffusionControlNetPipeline.from_pretrained(
+    stable_diffusion_model,
+    controlnet=controlnet_model,
+    torch_dtype=torch.float16
+).to("cuda")  # Use GPU for faster inference
+
+seed = 12345
+torch.manual_seed(seed)
+
+def load_depth_map(path):
+    if path.endswith(".npy"):
+        # Load npy depth map
+        depth_map = np.load(path)
+        depth_map = (depth_map * 255).astype(np.uint8)
+        depth_map = Image.fromarray(depth_map)
+    else:
+        # Load png depth map
+        depth_map = Image.open(path)
+    return depth_map
+
+def generate_image(prompt, depth_map, num_inference_steps=50):
+    start_time = time.time()  # Start latency timer
+    
+    result = pipe(prompt, control_image=depth_map, num_inference_steps=num_inference_steps)
+    
+    latency = time.time() - start_time  # Calculate latency
+    result.images[0].save(f"generated_image.png")  # Save the generated image
+    
+    return result.images[0], latency
+
+def task1_generate_best_images():
+    prompt = "A scenic mountain landscape with a river"
+    depth_map_path = "path_to_depth_map.png"  # Change this path to your depth map file
+
+    depth_map = load_depth_map(depth_map_path)
+
+    generated_image, latency = generate_image(prompt, depth_map)
+    print(f"Image generated in {latency:.2f} seconds")
+    
+    generated_image.show()
+
+def task2_generate_different_aspect_ratios():
+    prompt = "A scenic mountain landscape with a river"
+    depth_map_path = "path_to_nocrop_depth_map.png"  # Change this to the provided depth map
+    
+    depth_map = load_depth_map(depth_map_path)
+    
+    print("Generating with aspect ratio 16:9")
+    pipe.image_size = (512, 288)  # Set to 16:9 aspect ratio
+    generated_image_16_9, _ = generate_image(prompt, depth_map)
+    
+    print("Generating with aspect ratio 4:3")
+    pipe.image_size = (512, 384)  # Set to 4:3 aspect ratio
+    generated_image_4_3, _ = generate_image(prompt, depth_map)
+
+    generated_image_16_9.save("generated_image_16_9.png")
+    generated_image_4_3.save("generated_image_4_3.png")
+    
+    generated_image_16_9.show()
+    generated_image_4_3.show()
+
+def task3_reduce_latency(prompt, depth_map_path):
+    depth_map = load_depth_map(depth_map_path)
+    
+    print("Measuring latency with 50 inference steps...")
+    _, latency_default = generate_image(prompt, depth_map)
+    print(f"Latency with default settings: {latency_default:.2f} seconds")
+    
+    print("Reducing inference steps to 30...")
+    reduced_steps = 30
+    _, latency_reduced = generate_image(prompt, depth_map, num_inference_steps=reduced_steps)
+    print(f"Latency with {reduced_steps} inference steps: {latency_reduced:.2f} seconds")
+    
+    print(f"Latency reduced by {(latency_default - latency_reduced):.2f} seconds")
+
+def main():
+    print("Task 1: Generate best images using metadata and depth maps")
+    task1_generate_best_images()
+    
+    print("\nTask 2: Generate images with different aspect ratios")
+    task2_generate_different_aspect_ratios()
+    
+    print("\nTask 3: Measure and reduce generation latency")
+    prompt = "A futuristic city skyline at sunset"
+    depth_map_path = "path_to_depth_map.png"  # Change this path to your depth map file
+    task3_reduce_latency(prompt, depth_map_path)
+
+if _name_ == "_main_":
+    main()
